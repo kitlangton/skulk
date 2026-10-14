@@ -1,5 +1,5 @@
 import type { Check, RunResult } from "./condition.ts"
-import { ghBinary, npmBinary } from "./system.ts"
+import { ghBinary, glabBinary, npmBinary } from "./system.ts"
 import { Limits, type Builtin, type Status, type Watch } from "./watch.ts"
 
 export type SessionState = "idle" | "busy" | "missing"
@@ -66,6 +66,23 @@ interface PrCheckItem {
   readonly bucket: string
   readonly workflow?: string
   readonly link?: string
+}
+
+interface GlJob {
+  readonly id?: number
+  readonly name?: string
+  readonly status?: string
+  readonly allow_failure?: boolean
+}
+
+interface GlPipelineSummary {
+  readonly id: number
+  readonly status: string
+  readonly ref?: string
+  readonly sha?: string
+  readonly source?: string
+  readonly web_url: string
+  readonly jobs?: readonly GlJob[]
 }
 
 interface NpmMetadata {
@@ -231,8 +248,96 @@ async function checkPrChecks(watch: Watch, condition: Extract<Builtin, { readonl
   return { check: { type: "met", value: `${summary} · fail: ${failNames} · pass: ${passNames}` } }
 }
 
-export function isVersionNewer(candidate: string, baseline: string, timeMap: Record<string, string>) {
-  if (candidate === baseline) return false
+/** GitLab pipeline/job states that mean the run is over, one way or another. */
+const glFinishedStatuses = new Set(["success", "failed", "canceled", "skipped"])
+const glJobFinished = (status: string | undefined) => status !== undefined && glFinishedStatuses.has(status)
+
+function formatGlPipeline(detail: GlPipelineSummary, watch: Watch): BuiltinCheck {
+  if (!glFinishedStatuses.has(detail.status)) {
+    const jobs = detail.jobs ?? []
+    const done = jobs.filter((job) => glJobFinished(job.status)).length
+    const progress = jobs.length > 0 ? ` (${done}/${jobs.length} jobs)` : ""
+    const nextMs = detail.status === "running" ? 15_000 : 10_000
+    return {
+      check: { type: "pending", value: `${detail.status}${progress} · ${detail.ref || "pipeline"} #${detail.id} · ${detail.web_url}` },
+      nextIntervalMs: adaptiveInterval(watch, nextMs),
+    }
+  }
+  const failedJobs = (detail.jobs ?? [])
+    .filter((job) => job.status === "failed" && !job.allow_failure)
+    .map((job) => job.name ?? `job ${job.id ?? "?"}`)
+  const failedText = failedJobs.length > 0 ? failedJobs.join(", ") : "none"
+  return { check: { type: "met", value: `status: ${detail.status} · failed jobs: ${failedText} · ${detail.web_url}` } }
+}
+
+async function checkGlPipeline(watch: Watch, condition: Extract<Builtin, { readonly type: "gl-pipeline" }>, exec: NonNullable<BuiltinDeps["exec"]>): Promise<BuiltinCheck> {
+  const glab = glabBinary()
+  // --with-job-details pipeline JSON is far larger than skulk's 64KB output cap, so --jq
+  // reduces it to the fields the check reads before it crosses the process boundary.
+  const detailFields = "{id, status, ref, sha, web_url, jobs: [.jobs[]? | {id, name, status, allow_failure}]}"
+  const viewPipeline = async (pipelineID: string | number): Promise<BuiltinCheck> => {
+    const result = await exec([glab, "ci", "get", "-R", condition.repo, "-p", String(pipelineID), "--output", "json", "--with-job-details", "--jq", detailFields], watch)
+    const err = execError("glab ci get", result)
+    if (err) return { check: { type: "error", error: err } }
+    try {
+      return formatGlPipeline(JSON.parse(result.stdout) as GlPipelineSummary, watch)
+    } catch {
+      return { check: { type: "error", error: "could not parse glab ci get JSON" } }
+    }
+  }
+
+  if (condition.pipelineID !== undefined) return viewPipeline(condition.pipelineID)
+
+  if (condition.mr !== undefined) {
+    // The head pipeline, not the latest pipeline on the source branch: forks and detached pipelines diverge.
+    const result = await exec([glab, "ci", "get", "-R", condition.repo, "--merge-request", String(condition.mr), "--output", "json", "--with-job-details", "--jq", detailFields], watch)
+    const err = execError("glab ci get", result)
+    if (err) return { check: { type: "error", error: err } }
+    try {
+      return formatGlPipeline(JSON.parse(result.stdout) as GlPipelineSummary, watch)
+    } catch {
+      return { check: { type: "error", error: "could not parse glab ci get JSON" } }
+    }
+  }
+
+  const listArgs = [
+    glab,
+    "ci",
+    "list",
+    "-R",
+    condition.repo,
+    ...(condition.ref ? ["--ref", condition.ref] : []),
+    ...(condition.sha ? ["--sha", condition.sha] : []),
+    "--per-page",
+    "30",
+    "--output",
+    "json",
+  ]
+  const listResult = await exec(listArgs, watch)
+  const listErr = execError("glab ci list", listResult)
+  if (listErr) return { check: { type: "error", error: listErr } }
+  let pipelines: GlPipelineSummary[]
+  try {
+    pipelines = JSON.parse(listResult.stdout) as GlPipelineSummary[]
+  } catch {
+    return { check: { type: "error", error: "could not parse glab ci list JSON" } }
+  }
+  if (!Array.isArray(pipelines)) return { check: { type: "error", error: "could not parse glab ci list JSON" } }
+  // Newest first, matching gh-run's "most recent run wins".
+  const target = pipelines.toSorted((a, b) => b.id - a.id)[0]
+  if (!target) {
+    const label = condition.sha !== undefined
+      ? `${condition.ref ? `${condition.ref}@` : ""}${condition.sha.slice(0, 10)}`
+      : (condition.ref ?? "the ref")
+    return {
+      check: { type: "pending", value: `waiting for pipeline on ${label}` },
+      nextIntervalMs: adaptiveInterval(watch, 10_000),
+    }
+  }
+  return viewPipeline(target.id)
+}
+
+export function isVersionNewer(candidate: string, baseline: string, timeMap: Record<string, string>) {  if (candidate === baseline) return false
   const candTime = timeMap[candidate] ? Date.parse(timeMap[candidate]!) : Number.NaN
   const baseTime = timeMap[baseline] ? Date.parse(timeMap[baseline]!) : Number.NaN
   if (!Number.isNaN(candTime) && !Number.isNaN(baseTime) && candTime !== baseTime) return candTime > baseTime
@@ -368,6 +473,10 @@ export async function checkBuiltin(watch: Watch, condition: Builtin, deps: Built
     case "pr-checks": {
       if (!deps.exec) throw new Error("pr-checks condition needs an exec probe")
       return checkPrChecks(watch, condition, deps.exec)
+    }
+    case "gl-pipeline": {
+      if (!deps.exec) throw new Error("gl-pipeline condition needs an exec probe")
+      return checkGlPipeline(watch, condition, deps.exec)
     }
     case "npm": {
       if (!deps.exec) throw new Error("npm condition needs an exec probe")

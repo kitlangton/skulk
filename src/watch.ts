@@ -25,6 +25,14 @@ export type Condition =
       readonly required?: boolean
     }
   | {
+      readonly type: "gl-pipeline"
+      readonly repo: string
+      readonly pipelineID?: string
+      readonly mr?: number
+      readonly ref?: string
+      readonly sha?: string
+    }
+  | {
       readonly type: "npm"
       readonly pkg: string
       readonly tag?: string
@@ -34,7 +42,7 @@ export type Condition =
       readonly publishedAfter?: number
     }
 
-export const eventBuiltinTypes = ["gh-run", "pr-checks", "npm"] as const
+export const eventBuiltinTypes = ["gh-run", "pr-checks", "npm", "gl-pipeline"] as const
 export const builtinTypes = ["capacity", "idle", "done", ...eventBuiltinTypes] as const
 
 export type EventBuiltin = Extract<Condition, { readonly type: (typeof eventBuiltinTypes)[number] }>
@@ -155,6 +163,16 @@ export const describeCondition = (condition: Condition | undefined) => {
     }
     case "pr-checks":
       return `until ${condition.required ? "required " : ""}PR checks on ${condition.repo}#${condition.pr} finish`
+    case "gl-pipeline": {
+      const target = condition.pipelineID !== undefined
+        ? `pipeline ${condition.pipelineID}`
+        : condition.mr !== undefined
+          ? `MR !${condition.mr}`
+          : condition.sha !== undefined
+            ? `${condition.ref ? `${condition.ref}@` : ""}${condition.sha.slice(0, 10)}`
+            : (condition.ref ?? "")
+      return `until the GitLab pipeline ${condition.repo} ${target} completes`
+    }
     case "npm":
       return condition.mode === "changes"
         ? `until npm ${condition.pkg}@${condition.tag ?? "latest"} changes${condition.from ? ` from ${condition.from}` : ""}`

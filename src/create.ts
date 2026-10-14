@@ -99,7 +99,7 @@ function queueing(input: Queueing) {
   return { slot: input.slot, holdMs }
 }
 
-/** A watch whose condition the daemon evaluates itself: capacity, session idleness, watches ending, GitHub runs/checks, or npm. */
+/** A watch whose condition the daemon evaluates itself: capacity, session idleness, watches ending, GitHub runs/checks, GitLab pipelines, or npm. */
 export function whenWatch(
   input: Common & Queueing & { readonly condition: Builtin; readonly intervalMs?: number; readonly deadlineMs?: number; readonly maxFailures?: number },
 ): Watch {
@@ -136,6 +136,22 @@ export function whenWatch(
   if (condition.type === "pr-checks") {
     if (!repoPattern.test(condition.repo)) throw new Error("--repo must be OWNER/REPO")
     if (!Number.isInteger(condition.pr) || condition.pr < 1) throw new Error("--pr must be a positive PR number")
+  }
+  if (condition.type === "gl-pipeline") {
+    if (!/^[\w.-]+(?:\/[\w.-]+)+$/.test(condition.repo)) throw new Error("--repo must be NAMESPACE/PROJECT (nested namespaces allowed)")
+    if (condition.pipelineID !== undefined && (condition.mr !== undefined || condition.sha !== undefined || condition.ref !== undefined))
+      throw new Error("--pipeline takes no other target flags")
+    if (condition.mr !== undefined && (condition.sha !== undefined || condition.ref !== undefined))
+      throw new Error("--mr takes no other target flags")
+    if (condition.pipelineID === undefined && condition.mr === undefined && condition.sha === undefined && condition.ref === undefined)
+      throw new Error("give one of --pipeline ID, --mr IID, --sha SHA, or --ref BRANCH")
+    if (condition.pipelineID !== undefined && !/^\d+$/.test(condition.pipelineID))
+      throw new Error("--pipeline must be a numeric pipeline ID")
+    if (condition.mr !== undefined && (!Number.isInteger(condition.mr) || condition.mr < 1))
+      throw new Error("--mr must be a positive merge request IID")
+    if (condition.sha !== undefined && !/^[0-9a-fA-F]{7,40}$/.test(condition.sha))
+      throw new Error("--sha must be a 7–40 character commit SHA")
+    if (condition.ref !== undefined && !condition.ref.trim()) throw new Error("--ref must be a branch or tag name")
   }
   if (condition.type === "npm") {
     if (!/^(?:@[\w.-]+\/)?[\w.-]+$/.test(condition.pkg)) throw new Error("--package must be an npm package name")

@@ -21,6 +21,8 @@
     "launchd",
     "systemd",
     "github-actions",
+    "gitlab",
+    "gitlab-ci",
     "npm",
     "wake"
   ],
