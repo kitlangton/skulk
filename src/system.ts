@@ -153,6 +153,7 @@ export const probeCapacity = (watch: Watch) =>
   runCommand(["/bin/sh", "-c", capacityCommand()], { path: watch.path, timeoutMs: 60_000 })
 
 export const ghBinary = () => env("GH") ?? "gh"
+export const glabBinary = () => env("GLAB") ?? "glab"
 export const npmBinary = () => env("NPM") ?? "npm"
 export const launchdLabel = () => env("LABEL") ?? "dev.kitlangton.skulk"
 

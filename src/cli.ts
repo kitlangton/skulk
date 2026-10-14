@@ -28,6 +28,10 @@ Built-in conditions (evaluated by the daemon; no probe script to write)
       the conclusion, failed job names and run URL
   skulk when pr-checks --repo OWNER/REPO --pr N [--required] --do <instruction>
       waits for PR checks to finish (default every 15s); reports pass and fail check names
+  skulk when gl-pipeline --repo NAMESPACE/PROJECT (--pipeline ID | --mr IID | --sha SHA [--ref BRANCH] | --ref BRANCH) --do <instruction>
+      waits for the GitLab pipeline to appear and finish (adaptive 10–15s checks); reports the
+      status, failed job names and pipeline URL. Needs the \`glab\` CLI (set $SKULK_GLAB);
+      self-hosted GitLab works through glab's own host configuration
   skulk when npm --package NAME (--tag TAG --changes [--from V] | --newer-than VERSION | --published-after TIME) --do <instruction>
       waits for an npm version to publish (default every 15s); reports version and publish time
   skulk when exits --do <instruction> [--timeout D] [--deadline D] -- <blocking command...>
@@ -40,7 +44,7 @@ Built-in conditions (evaluated by the daemon; no probe script to write)
       every listed OpenCode session has finished its run and stayed idle for --stable
   skulk when done <id|name>... --do <instruction>
       every listed watch has ended (fired, expired, failed or was cancelled)
-  Built-in watches take --every (default 15s for gh-run/pr-checks/npm, 1m for capacity/idle/done),
+  Built-in watches take --every (default 15s for gh-run/pr-checks/npm/gl-pipeline, 1m for capacity/idle/done),
   --deadline, --failures, --no-check, --name and --session.
 
 Polls (one wake when the condition holds, then the watch ends)
@@ -137,6 +141,9 @@ const { values: flags, positionals } = (() => {
         sha: { type: "string" },
         pr: { type: "string" },
         required: { type: "boolean" },
+        pipeline: { type: "string" },
+        mr: { type: "string" },
+        ref: { type: "string" },
         package: { type: "string" },
         tag: { type: "string" },
         "newer-than": { type: "string" },
@@ -418,6 +425,16 @@ async function createWhen(kind: string | undefined, args: readonly string[]) {
       pr: flags.pr !== undefined ? number(flags.pr, 0, "pr") : 0,
       required: flags.required || undefined,
     }
+  } else if (kind === "gl-pipeline") {
+    if (args.length) fail("skulk when gl-pipeline takes flags (--repo, --pipeline, --mr, --sha, --ref)")
+    condition = {
+      type: "gl-pipeline",
+      repo: flags.repo ?? "",
+      pipelineID: flags.pipeline,
+      mr: flags.mr !== undefined ? number(flags.mr, 0, "mr") : undefined,
+      ref: flags.ref,
+      sha: flags.sha,
+    }
   } else if (kind === "npm") {
     const pkg = flags.package ?? args[0] ?? ""
     if (args.length > (flags.package ? 0 : 1)) fail("skulk when npm --package NAME (--tag TAG --changes | --newer-than VERSION | --published-after TIME)")
@@ -434,7 +451,7 @@ async function createWhen(kind: string | undefined, args: readonly string[]) {
       newerThan: flags["newer-than"],
       publishedAfter,
     }
-  } else fail("skulk when capacity|idle|done|gh-run|pr-checks|npm|exits …")
+  } else fail("skulk when capacity|idle|done|gh-run|pr-checks|gl-pipeline|npm|exits …")
   const target = await targetSession()
   const watch = parseOr(() =>
     whenWatch({

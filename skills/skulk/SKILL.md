@@ -2,10 +2,11 @@
 name: skulk
 description: >-
   Wait for something without sleep-polling: schedule an OpenCode session wake-up with skulk.
-  Use whenever an agent needs to wait for CI, GitHub Actions runs, pull request checks, an npm
-  publish, a deploy, an approval, another agent session or watch to finish, a long-running
-  command to exit, the machine to have capacity for heavy work, or a time of day. Use it instead
-  of `sleep` loops, repeated polling, or asking the user to check back later.
+  Use whenever an agent needs to wait for CI, GitHub Actions runs, pull request checks, GitLab
+  pipelines, merge request pipelines, an npm publish, a deploy, an approval, another agent
+  session or watch to finish, a long-running command to exit, the machine to have capacity for
+  heavy work, or a time of day. Use it instead of `sleep` loops, repeated polling, or asking
+  the user to check back later.
 ---
 
 # skulk
@@ -36,6 +37,12 @@ skulk when gh-run --repo owner/app --workflow release.yml --sha 41b03de --name r
 # Every check on a pull request (--required for only required checks)
 skulk when pr-checks --repo owner/app --pr 123 --name ci-123 \
   --do "PR 123 CI finished: fix any failures, otherwise report green."
+
+# GitLab pipeline: by pipeline ID, merge request, commit, or branch (needs the glab CLI)
+skulk when gl-pipeline --repo group/app --mr 42 --name mr-42 \
+  --do "MR 42 pipeline finished: fix any failed jobs, otherwise report green."
+skulk when gl-pipeline --repo group/app --ref main --name main-ci \
+  --do "main pipeline decided: if it failed, read the failed job logs and fix it."
 
 # npm publish: a tag changes, a version newer than X, or anything published after a time
 skulk when npm --package @scope/client --tag latest --changes --name client-latest \
@@ -92,4 +99,4 @@ Give long blocking commands a long shell timeout so the harness doesn't backgrou
 
 ## Security
 
-`skulk poll` and `skulk when exits` store a command the daemon runs later as the user, outside the agent's permission prompt. Don't add a blanket `skulk *` allow rule. Allow only the subcommands that can't run commands (`in`, `at`, `when gh-run|pr-checks|npm|capacity|idle|done`, `wait`, `list`, `show`, `logs`, `cancel`, `release`), and keep `skulk poll`, `skulk when exits` and `skulk run` on ask. `SKULK_ALLOW_EXEC=0` in the daemon's environment disables command watches entirely; timers and built-in triggers keep working.
+`skulk poll` and `skulk when exits` store a command the daemon runs later as the user, outside the agent's permission prompt. Don't add a blanket `skulk *` allow rule. Allow only the subcommands that can't run commands (`in`, `at`, `when gh-run|pr-checks|gl-pipeline|npm|capacity|idle|done`, `wait`, `list`, `show`, `logs`, `cancel`, `release`), and keep `skulk poll`, `skulk when exits` and `skulk run` on ask. `SKULK_ALLOW_EXEC=0` in the daemon's environment disables command watches entirely; timers and built-in triggers keep working.

@@ -383,6 +383,134 @@ describe("wake when pr-checks", () => {
   })
 })
 
+describe("wake when gl-pipeline", () => {
+  test("waits for a pipeline to appear, tracks progress, and wakes with status, failed jobs and URL", async () => {
+    const h = new Harness()
+    const watch = when(h, "gl-main", { type: "gl-pipeline", repo: "acme/app", ref: "main" })
+    expect(watch.intervalMs).toBe(15_000)
+    const url = "https://gitlab.com/acme/app/-/pipelines/2944622344"
+    h.probeResults = [
+      // 1. Not created yet
+      ok("[]"),
+      // 2. Appeared in the list
+      ok(JSON.stringify([{ id: 2944622344, status: "running", ref: "main", web_url: url }])),
+      // 3. Detail with job progress
+      ok(
+        JSON.stringify({
+          id: 2944622344,
+          status: "running",
+          ref: "main",
+          web_url: url,
+          jobs: [
+            { name: "build", status: "success" },
+            { name: "test", status: "running" },
+          ],
+        }),
+      ),
+      // 4. Finished in the list -> detail view
+      ok(JSON.stringify([{ id: 2944622344, status: "failed", ref: "main", web_url: url }])),
+      // 5. Detail: allow_failure and canceled jobs are not failed jobs
+      ok(
+        JSON.stringify({
+          id: 2944622344,
+          status: "failed",
+          ref: "main",
+          web_url: url,
+          jobs: [
+            { name: "build", status: "success" },
+            { name: "test", status: "failed", allow_failure: false },
+            { name: "lint", status: "failed", allow_failure: true },
+            { name: "docs", status: "canceled" },
+          ],
+        }),
+      ),
+    ]
+
+    await h.tick()
+    expect(h.get(watch.id).lastValue).toContain("waiting for pipeline on main")
+    // Adaptive interval while waiting to appear is 10s
+    expect(h.get(watch.id).dueAt).toBe(h.now + 10_000)
+
+    h.advance(10_000)
+    await h.tick()
+    expect(h.get(watch.id).lastValue).toContain("running (1/2 jobs) · main #2944622344")
+    // Adaptive interval while running is 15s
+    expect(h.get(watch.id).dueAt).toBe(h.now + 15_000)
+    expect(h.server.messages.size).toBe(0)
+
+    h.advance(15_000)
+    await h.tick()
+    expect(h.server.messages.size).toBe(1)
+    expect(h.server.texts[0]).toContain("status: failed · failed jobs: test")
+    expect(h.server.texts[0]).toContain(url)
+    expect(h.get(watch.id).status).toBe("done")
+  })
+
+  test("watches a pipeline by ID and wakes when it succeeds", async () => {
+    const h = new Harness()
+    const url = "https://gitlab.com/acme/app/-/pipelines/2944622344"
+    when(h, "gl-run", { type: "gl-pipeline", repo: "acme/app", pipelineID: "2944622344" })
+    h.probeResults = [
+      ok(
+        JSON.stringify({
+          id: 2944622344,
+          status: "success",
+          ref: "main",
+          web_url: url,
+          jobs: [{ name: "build", status: "success" }],
+        }),
+      ),
+    ]
+    await h.tick()
+    expect(h.server.messages.size).toBe(1)
+    expect(h.server.texts[0]).toContain("status: success · failed jobs: none")
+    expect(h.server.texts[0]).toContain(url)
+  })
+
+  test("resolves the head pipeline of a merge request", async () => {
+    const h = new Harness()
+    const url = "https://gitlab.com/acme/app/-/pipelines/2944591528"
+    const watch = when(h, "gl-mr", { type: "gl-pipeline", repo: "acme/app", mr: 42 })
+    h.probeResults = [
+      ok(
+        JSON.stringify({
+          id: 2944591528,
+          status: "running",
+          ref: "refs/merge-requests/42/train",
+          web_url: url,
+          jobs: [{ name: "test", status: "pending" }],
+        }),
+      ),
+      ok(
+        JSON.stringify({
+          id: 2944591528,
+          status: "canceled",
+          ref: "refs/merge-requests/42/train",
+          web_url: url,
+          jobs: [{ name: "test", status: "canceled" }],
+        }),
+      ),
+    ]
+    await h.tick()
+    expect(h.probes[0]).toContain("--merge-request")
+    expect(h.get(watch.id).lastValue).toContain("running (0/1 jobs)")
+    h.advance(15_000)
+    await h.tick()
+    expect(h.server.messages.size).toBe(1)
+    expect(h.server.texts[0]).toContain("status: canceled · failed jobs: none")
+    expect(h.get(watch.id).status).toBe("done")
+  })
+
+  test("a glab failure is a failed check, never a wake", async () => {
+    const h = new Harness()
+    const watch = when(h, "gl-fail", { type: "gl-pipeline", repo: "acme/app", ref: "main" })
+    h.probeResults = [ok("error: no pipelines", 1)]
+    await h.tick()
+    expect(h.get(watch.id).consecutiveFailures).toBe(1)
+    expect(h.server.messages.size).toBe(0)
+  })
+})
+
 describe("wake when npm", () => {
   const npmPayload = (devVersion: string, devTime: string) =>
     JSON.stringify({
@@ -473,6 +601,11 @@ describe("validation", () => {
     expect(() => whenWatch({ ...base, condition: { type: "gh-run", repo: "a/b" } })).toThrow("give one of")
     expect(() => whenWatch({ ...base, condition: { type: "gh-run", repo: "a/b", sha: "41b03dea0f" } })).toThrow("--workflow")
     expect(() => whenWatch({ ...base, condition: { type: "pr-checks", repo: "a/b", pr: 0 } })).toThrow("--pr")
+    expect(() => whenWatch({ ...base, condition: { type: "gl-pipeline", repo: "acme" } })).toThrow("--repo")
+    expect(() => whenWatch({ ...base, condition: { type: "gl-pipeline", repo: "acme/app" } })).toThrow("give one of")
+    expect(() => whenWatch({ ...base, condition: { type: "gl-pipeline", repo: "acme/app", pipelineID: "abc" } })).toThrow("--pipeline must be a numeric")
+    expect(() => whenWatch({ ...base, condition: { type: "gl-pipeline", repo: "acme/app", pipelineID: "1", ref: "main" } })).toThrow("takes no other target flags")
+    expect(() => whenWatch({ ...base, condition: { type: "gl-pipeline", repo: "acme/app", mr: 0 } })).toThrow("--mr")
     expect(() => whenWatch({ ...base, condition: { type: "npm", pkg: "bad/pkg/name", mode: "changes" } })).toThrow("--package")
     expect(() => exitsWatch({ ...base, command: [] })).toThrow("blocking command")
   })

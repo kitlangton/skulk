@@ -13,6 +13,8 @@ skulk when gh-run --repo anomalyco/opencode --workflow publish.yml --sha 41b03de
   --do "If publish succeeded, wait for @opencode/client@dev on npm; if failed, run gh-fail."
 skulk when pr-checks --repo anomalyco/opencode --pr 54218 --name ci-54218 \
   --do "CI finished: fix failures, or merge if green."
+skulk when gl-pipeline --repo group/app --mr 42 --name mr-42 \
+  --do "MR pipeline decided: fix failed jobs, or merge if green."
 skulk when npm --package @opencode/client --tag dev --changes --name opencode-client-dev \
   --do "Bump OpenCode and @effect/* to the newly published dev version."
 
@@ -61,6 +63,12 @@ skulk when gh-run --repo anomalyco/opencode --pr 54198 --workflow publish.yml --
 skulk when gh-run --repo anomalyco/opencode --run 38007696000 --do "…"
 skulk when pr-checks --repo anomalyco/opencode --pr 54275 --do "Check PR CI results."
 
+# GitLab pipelines (needs the glab CLI; self-hosted GitLab via glab's own host config)
+skulk when gl-pipeline --repo group/app --pipeline 2944622344 --do "…"
+skulk when gl-pipeline --repo group/app --mr 42 --do "…"          # the MR's head pipeline
+skulk when gl-pipeline --repo group/app --sha 4f15f2f2ddb --do "…"
+skulk when gl-pipeline --repo group/app --ref main --do "…"       # latest pipeline on the branch
+
 # npm package publishes (default 15s polling; reports version and publish timestamp)
 skulk when npm --package @opencode/client --tag dev --changes --do "…"
 skulk when npm --package @opencode/client --newer-than 0.0.0-dev-20800 --do "…"
@@ -82,6 +90,7 @@ skulk when done perf-proofs --do "Proofs finished; summarize."
 | --- | --- |
 | `gh-run` | the GitHub Actions run (`--run ID`, `--workflow FILE --sha SHA`, or `--pr N [--workflow FILE]` on `--repo OWNER/REPO`) appears and reaches `completed`. Polls every 10s while waiting/queued and 15s while `in_progress`; reports conclusion, failed job names and the run URL. |
 | `pr-checks` | every check on `--repo OWNER/REPO --pr N` (or `--required` checks) has finished (`bucket != pending`). Default every 15s; reports pass and fail check names. |
+| `gl-pipeline` | the GitLab pipeline on `--repo NAMESPACE/PROJECT`, targeted by `--pipeline ID`, `--mr IID` (the MR's head pipeline), `--sha SHA`, or `--ref BRANCH`, appears and reaches a finished status. Polls every 10s while waiting/queued and 15s while `running`; reports the status, failed job names (allow-failure jobs excluded) and the pipeline URL. Needs the `glab` CLI. |
 | `npm` | `--package NAME` has a new version on `--tag TAG --changes [--from V]`, a version `--newer-than VERSION`, or a version `--published-after TIME`. Default every 15s; reports version and publish time. |
 | `exits` | the blocking command after `--` exits (with any exit code), reporting the exit code and output tail. Re-runs if the daemon restarts while waiting, and respects `--timeout` and `--deadline`. |
 | `capacity` | CPU ≤ `--cpu` (70%), at most `--builds` (1) running builds, ≥ `--disk` (20) GB free, continuously for `--stable` (3m). Optional: needs a probe, see below. |
@@ -237,6 +246,7 @@ The skill lives in [`skills/skulk/SKILL.md`](skills/skulk/SKILL.md).
 | `SKULK_HOME` | `~/.local/state/skulk` | State directory (`skulk.db`, `daemon.pid`, `daemon.log`, `logs/`) |
 | `SKULK_OPENCODE` | `opencode` | Path or name of the `opencode` CLI binary |
 | `SKULK_GH` | `gh` | Path or name of the GitHub CLI binary |
+| `SKULK_GLAB` | `glab` | Path or name of the GitLab CLI binary |
 | `SKULK_NPM` | `npm` | Path or name of the `npm` CLI binary |
 | `SKULK_CAPACITY_COMMAND` | `mac-sim-lease --status` | Command probed by `skulk when capacity` (JSON, see above) |
 | `SKULK_HEAVY_SLOT_SIZE` | `2` | Default concurrency limit for the `heavy` slot |
