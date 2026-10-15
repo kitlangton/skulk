@@ -1,3 +1,4 @@
+import { isWebhook } from "./webhook.ts"
 import { isEventBuiltin, Limits, type Builtin, type Condition, type Watch } from "./watch.ts"
 
 interface Common {
@@ -25,7 +26,8 @@ const base = (input: Common) => ({
 })
 
 function validateCommon(input: Common) {
-  if (!/^ses_[A-Za-z0-9]+$/.test(input.sessionID)) throw new Error(`not a session ID: ${input.sessionID}`)
+  if (!/^ses_[A-Za-z0-9]+$/.test(input.sessionID) && !isWebhook(input.sessionID))
+    throw new Error(`not a session ID or https:// webhook: ${input.sessionID}`)
   if (!input.noDeliver && !input.instruction.trim()) throw new Error("say what to do on wake with --do")
   if (input.name !== undefined && !/^[\w.:-]{1,64}$/.test(input.name))
     throw new Error("--name may use letters, digits, . _ : - (max 64)")

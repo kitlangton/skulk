@@ -6,6 +6,7 @@ import { wakeText } from "./message.ts"
 import { logDirectory, type Store } from "./store.ts"
 import { clip } from "./text.ts"
 import { isBuiltin, Limits, type Outcome, type Status, type Watch } from "./watch.ts"
+import { displayTarget } from "./webhook.ts"
 
 export type DeliveryResult = { readonly ok: true } | { readonly ok: false; readonly permanent: boolean; readonly error: string }
 
@@ -296,7 +297,7 @@ export class Engine {
       if (watch.slot) this.deps.store.release(watch.id)
       return this.log(watch.id, "watch changed before firing; skipped")
     }
-    this.log(watch.id, `${outcome}: queueing wake into ${watch.sessionID} as ${firing.wakeMessageID}`)
+    this.log(watch.id, `${outcome}: queueing wake into ${displayTarget(watch.sessionID)} as ${firing.wakeMessageID}`)
     await this.deliver(firing)
   }
 
@@ -312,7 +313,7 @@ export class Engine {
     let next: Watch
     if (result.ok) {
       next = { ...watch, status: finalStatus[watch.outcome!], deliveredAt: now, endedAt: now, deliveryAttempts: attempts, nextDeliveryAt: undefined }
-      this.log(watch.id, `delivered to ${watch.sessionID} (attempt ${attempts}); watch ${next.status}`)
+      this.log(watch.id, `delivered to ${displayTarget(watch.sessionID)} (attempt ${attempts}); watch ${next.status}`)
     } else if (result.permanent || now - (watch.firedAt ?? now) >= Limits.deliveryWindowMs) {
       next = { ...watch, status: "undeliverable", endedAt: now, deliveryAttempts: attempts, lastDeliveryError: result.error }
       if (watch.slot && this.deps.store.release(watch.id)) this.log(watch.id, `released slot ${watch.slot}: undeliverable`)

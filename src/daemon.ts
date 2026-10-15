@@ -3,6 +3,7 @@ import { join } from "node:path"
 import { Engine, fileLogger, logPath } from "./engine.ts"
 import { daemonPID, pidPath } from "./pid.ts"
 import type { Store } from "./store.ts"
+import { deliverViaWebhook, isWebhook } from "./webhook.ts"
 import { allowExec, builtinDeps, deliverViaOpencode, messageID, runWatch } from "./system.ts"
 
 /** Ask a running daemon to look at the store now (after create or cancel). */
@@ -122,7 +123,7 @@ export async function runDaemon(store: Store) {
     store,
     now: Date.now,
     run: runWatch,
-    deliver: deliverViaOpencode,
+    deliver: (delivery) => (isWebhook(delivery.sessionID) ? deliverViaWebhook(delivery) : deliverViaOpencode(delivery)),
     newMessageID: messageID,
     log: fileLogger(root),
     builtin: builtinDeps(store),

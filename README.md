@@ -33,6 +33,17 @@ skulk status                  # is the daemon running?
 
 The target session defaults to `$OPENCODE_SESSION_ID`, which OpenCode's shell tool sets to the calling session, so an agent that runs `skulk` wakes itself. Pass `--session` to wake another session (for example HOME).
 
+### Webhook targets
+
+To wake an agent outside OpenCode, pass an `https://` URL as `--session` (or set `$SKULK_WEBHOOK`). The daemon POSTs the wake there instead of calling `opencode api`, so anything that turns an HTTP request into a prompt can be woken, such as a T3 Code thread's webhook task.
+
+```sh
+skulk when exits --session "$THREAD_WEBHOOK" --name migrate --timeout 2h \
+  --do "The migration exited: check its output and fix any failures." -- bun run migrate
+```
+
+The request body is `{ "id": "msg_…", "text": "<wake message>", "metadata": { "source": "skulk", "watchID": "wk_…", "outcome": "…" } }`, with an `idempotency-key` header equal to `id`. A 2xx response is delivered; 408, 429, 5xx and network errors are retried like OpenCode deliveries; any other 4xx marks the watch undeliverable. Output and logs show only the URL's origin, because the path usually carries a token; `--json` keeps the full URL. `when idle` and the automatic release of capacity holds read OpenCode session state, so they don't apply to webhook targets.
+
 ## Conditions
 
 The compared value is the command's trimmed stdout. A single argument after `--` runs through `/bin/sh -c`; several arguments run as argv.
@@ -164,7 +175,7 @@ For unattended agents, allow only the subcommands that cannot run commands, and 
 
 - **No shell is not the boundary.** A single argument after `--` runs through `/bin/sh -c`; several run as argv. Requiring argv would not narrow anything (`-- sh -c '…'` is still argv), so skulk keeps the shell form and relies on the permission rule above.
 - **Disable commands entirely** with `SKULK_ALLOW_EXEC=0` in the daemon's environment (the plist's `EnvironmentVariables`). The daemon then fails command watches with an explanation instead of running them, and the CLI refuses to create them when the variable is set in its own environment. Timers and built-in triggers keep working.
-- **Prompts.** `--do` text, and `--session` to target another session, let anyone who can run `skulk` queue a prompt into a session. Treat allowing it like allowing an agent to message that session.
+- **Prompts.** `--do` text, and `--session` to target another session, let anyone who can run `skulk` queue a prompt into a session. Treat allowing it like allowing an agent to message that session. A webhook target is stored in the database in full, so treat a webhook URL that carries a token like any other credential.
 - **Audit.** Each watch records the creating session (`createdBy`), the directory and the exact command; `skulk show` and `skulk logs` display them.
 - **Environment.** Commands run in the directory where the watch was created, with the daemon's environment (the plist's `HOME` and `PATH`) plus the `PATH` captured at creation. They do not get the creating shell's other variables, so a command that needs a token should fetch it itself (keychain, `op read`, a CLI's own login), not inline it. The command is stored in the database; don't put secrets in it.
 - **Private state.** The state directory, database and logs are owner-only (`0700`/`0600`; the daemon runs with umask `077`). Logs record values and error lines, clipped and passed through best-effort redaction of common token shapes (`Bearer …`, `ghp_…`, `npm_…`, `sk-…`, `xox…-…`, JWTs, URL credentials, `token=…`). The environment is never logged.
@@ -234,6 +245,7 @@ The skill lives in [`skills/skulk/SKILL.md`](skills/skulk/SKILL.md).
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `OPENCODE_SESSION_ID` | *(set by OpenCode)* | Default target session when `--session` is omitted |
+| `SKULK_WEBHOOK` | *(unset)* | Default `https://` webhook target when `--session` and `$OPENCODE_SESSION_ID` are both unset |
 | `SKULK_HOME` | `~/.local/state/skulk` | State directory (`skulk.db`, `daemon.pid`, `daemon.log`, `logs/`) |
 | `SKULK_OPENCODE` | `opencode` | Path or name of the `opencode` CLI binary |
 | `SKULK_GH` | `gh` | Path or name of the GitHub CLI binary |

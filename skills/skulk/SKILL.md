@@ -12,7 +12,7 @@ description: >-
 
 skulk queues one message into an OpenCode session when a time arrives or an event happens. A small daemon owns every watch, so the agent ends its turn and pays nothing while it waits. The message names the watch, says what changed, and repeats your `--do` instruction.
 
-The target session defaults to `$OPENCODE_SESSION_ID` (the calling session), so `skulk ... --do "..."` wakes the agent that ran it. Pass `--session ses_…` to wake a different session.
+The target session defaults to `$OPENCODE_SESSION_ID` (the calling session), so `skulk ... --do "..."` wakes the agent that ran it. Pass `--session ses_…` to wake a different session. Outside OpenCode, pass an `https://` webhook URL as `--session` (or set `$SKULK_WEBHOOK`) and the daemon POSTs the wake there; keep that URL out of messages and commits, since it usually carries a token.
 
 Check it's installed and the daemon is running with `skulk status`. If it isn't, see https://github.com/kitlangton/skulk#install.
 
